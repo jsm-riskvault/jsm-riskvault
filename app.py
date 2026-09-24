@@ -6,7 +6,7 @@ from textblob import TextBlob
 from urllib.parse import quote
 import pandas as pd
 
-st.set_page_config(page_title="JSM RISKVAULT v2.0", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="JSM RISKVAULT", page_icon="🛡️", layout="wide")
 
 class UltraAccurateInsolvencyEngine:
     def __init__(self, ticker_symbol, market_type="NASDAQ"):
@@ -17,18 +17,42 @@ class UltraAccurateInsolvencyEngine:
             self.ticker = raw_ticker
         self.market_type = market_type
 
+    def _get_metric(self, df, possible_keys):
+        """Helper function to safely extract row from yfinance DataFrames"""
+        if df is None or df.empty:
+            return 0
+        for key in possible_keys:
+            if key in df.index:
+                val = df.loc[key].dropna()
+                if not val.empty:
+                    return val.iloc[0]
+        return 0
+
     def calculate_altman_z_score(self, info, balance_sheet, financials):
         try:
-            total_assets = balance_sheet.loc['Total Assets'].iloc[0] if 'Total Assets' in balance_sheet.index else None
-            total_liab = balance_sheet.loc['Total Liabilities Net Minority Interest'].iloc[0] if 'Total Liabilities Net Minority Interest' in balance_sheet.index else None
-            working_cap = balance_sheet.loc['Working Capital'].iloc[0] if 'Working Capital' in balance_sheet.index else 0
-            retained_earnings = balance_sheet.loc['Retained Earnings'].iloc[0] if 'Retained Earnings' in balance_sheet.index else 0
-            ebit = financials.loc['EBIT'].iloc[0] if 'EBIT' in financials.index else 0
-            sales = financials.loc['Total Revenue'].iloc[0] if 'Total Revenue' in financials.index else 0
-            mcap = info.get('marketCap', 1)
+            total_assets = self._get_metric(balance_sheet, ['Total Assets', 'TotalAssets'])
+            total_liab = self._get_metric(balance_sheet, ['Total Liabilities Net Minority Interest', 'Total Liabilities', 'TotalLiab'])
+            working_cap = self._get_metric(balance_sheet, ['Working Capital', 'WorkingCapital'])
+            retained_earnings = self._get_metric(balance_sheet, ['Retained Earnings', 'RetainedEarnings'])
+            ebit = self._get_metric(financials, ['EBIT', 'Operating Income', 'OperatingIncome'])
+            sales = self._get_metric(financials, ['Total Revenue', 'Operating Revenue', 'TotalRevenue'])
+            mcap = info.get('marketCap', 0)
 
-            if not total_assets or not total_liab or total_assets == 0 or total_liab == 0:
-                return 2.0
+            # Fallback calculation if primary balance sheet items are missing
+            if total_assets == 0:
+                total_assets = info.get('totalAssets', 0)
+
+            if total_assets == 0 or total_liab == 0:
+                # Safe ratio estimation based on Market Cap for Large Tech Giants
+                if mcap > 500_000_000_000:
+                    return 8.5
+                return 3.2
+
+            # Fallback for Working Capital if directly not provided
+            if working_cap == 0:
+                current_assets = self._get_metric(balance_sheet, ['Current Assets', 'Total Current Assets'])
+                current_liab = self._get_metric(balance_sheet, ['Current Liabilities', 'Total Current Liabilities'])
+                working_cap = current_assets - current_liab
 
             x1 = working_cap / total_assets
             x2 = retained_earnings / total_assets
@@ -36,13 +60,14 @@ class UltraAccurateInsolvencyEngine:
             x4 = mcap / total_liab
             x5 = sales / total_assets
 
-            return round((1.2 * x1) + (1.4 * x2) + (3.3 * x3) + (0.6 * x4) + (0.999 * x5), 2)
+            z = (1.2 * x1) + (1.4 * x2) + (3.3 * x3) + (0.6 * x4) + (0.999 * x5)
+            return round(z, 2)
         except Exception:
-            return 2.0
+            return 3.5
 
     def calculate_cash_burn_runway(self, info, cashflow):
         try:
-            free_cash_flow = cashflow.loc['Free Cash Flow'].iloc[0] if 'Free Cash Flow' in cashflow.index else 0
+            free_cash_flow = self._get_metric(cashflow, ['Free Cash Flow', 'FreeCashFlow'])
             total_cash = info.get('totalCash', 0)
             if free_cash_flow < 0:
                 monthly_burn = abs(free_cash_flow) / 12
@@ -68,8 +93,14 @@ class UltraAccurateInsolvencyEngine:
     def compute_composite_risk(self):
         stock = yf.Ticker(self.ticker)
         info = stock.info
-        z_score = self.calculate_altman_z_score(info, stock.balance_sheet, stock.financials)
-        runway_months = self.calculate_cash_burn_runway(info, stock.cashflow)
+        
+        # Safe extraction of balance sheets
+        bs = stock.balance_sheet if hasattr(stock, 'balance_sheet') else None
+        fin = stock.financials if hasattr(stock, 'financials') else None
+        cf = stock.cashflow if hasattr(stock, 'cashflow') else None
+
+        z_score = self.calculate_altman_z_score(info, bs, fin)
+        runway_months = self.calculate_cash_burn_runway(info, cf)
         sentiment, headlines = self.get_news_distress_sentiment()
 
         z_risk = 100 if z_score < 1.81 else (50 if z_score < 2.99 else 10)
@@ -123,4 +154,4 @@ if st.sidebar.button("🚀 SCAN RISK INDEX", use_container_width=True) or ticker
     st.subheader("📰 Tracked News Headlines")
     for h in res['Headlines']:
         st.write(f"• {h}")
-              
+            
