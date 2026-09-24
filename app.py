@@ -121,8 +121,8 @@ class UltraAccurateInsolvencyEngine:
             "Headlines": headlines
         }
 
-st.sidebar.title("🛡️ JSM RISKVAULT v2.0")
-st.sidebar.caption("by JSM Labs | Founder: Jam Saeed Motha")
+st.sidebar.title("🛡️ JSM RISKVAULT")
+st.sidebar.caption("by JSM Labs | Founder: Jam Saeed")
 
 market = st.sidebar.radio("Market Select Karein:", ["NASDAQ (US)", "PSX (Pakistan)"])
 market_code = "PSX" if "PSX" in market else "NASDAQ"
